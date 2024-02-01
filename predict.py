@@ -37,6 +37,7 @@ import librosa
 import subprocess
 import math
 
+from BeatNet.BeatNet import BeatNet
 import allin1
 import pytsmod as tsm
 
@@ -314,71 +315,74 @@ class Predictor(BasePredictor):
         
         wav_length = wav.shape[-1]
 
-        if len(music_input_analysis.downbeats) > 0:
-            wav_analysis = allin1.analyze('background.wav')
 
-            wav_downbeats = []
-            input_downbeats = []
-            bpm_hard_sync=False
-            if bpm_hard_sync and music_input_analysis.bpm is not None:
-                music_input_bpm_based_downbeats = [music_input_analysis.downbeats[0]]
-                downbeat_step = 60.9/music_input_analysis.bpm
-                while True:
-                    if music_input_bpm_based_downbeats[-1]+downbeat_step >= wav_length/wav_sr:
-                        break
-                    music_input_bpm_based_downbeats.append(music_input_bpm_based_downbeats[-1]+downbeat_step)
-                music_input_downbeats = music_input_bpm_based_downbeats
-            else:
-                music_input_downbeats = music_input_analysis.downbeats
-            for wav_beat in wav_analysis.downbeats:
-                input_beat = min(music_input_downbeats, key=lambda x: abs(wav_beat - x), default=None)
-                if input_beat is None:
-                    continue
-                print(wav_beat, input_beat)
-                if len(input_downbeats) != 0 and int(input_beat * wav_sr) == input_downbeats[-1]:
-                    print('Dropped')
-                    continue
-                if abs(wav_beat-input_beat)>beat_sync_threshold:
-                    input_beat = wav_beat
-                    print('Replaced')
-                wav_downbeats.append(int(wav_beat * wav_sr))
-                input_downbeats.append(int(input_beat * wav_sr))
+        """Start Here"""
+        # if len(music_input_analysis.downbeats) > 0:
 
-            downbeat_offset = input_downbeats[0]-wav_downbeats[0]
-            # print(downbeat_offset)
-            if downbeat_offset > 0:
-                wav = torch.concat([torch.zeros([1,channel,int(downbeat_offset)]).cpu(),wav.cpu()],dim=-1)
-                for i in range(len(wav_downbeats)):
-                    wav_downbeats[i]=wav_downbeats[i]+downbeat_offset
-            wav_downbeats = [0] + wav_downbeats + [wav_length]
-            input_downbeats = [0] + input_downbeats + [wav_length]
+        #     estimator = BeatNet.BeatNet(1, mode='offline', inference_model='DBN', plot=[], thread=False)
+        #     background_beat_estimation = estimator.process('background.wav')
+        #     background_estimated_downbeats = [beat[0] for beat in background_beat_estimation if beat[1] == 1.0] 
+            
+        #     input_beat_estimation = estimator.process(music_input)
+        #     input_estimated_downbeats = [beat[0] for beat in input_beat_estimation if beat[1] == 1.0] 
 
-            wav = torch.Tensor(tsm.wsola(wav[0].cpu().detach().numpy(), np.array([wav_downbeats, input_downbeats])))[...,:wav_length].unsqueeze(0).to(torch.float32)
+        #     wav_downbeats = []
+        #     input_downbeats = []
+        #     for wav_beat in background_estimated_downbeats:
+        #         input_beat = min(input_estimated_downbeats, key=lambda x: abs(wav_beat - x), default=None)
+        #         if input_beat is None:
+        #             continue
+        #         print(wav_beat, input_beat)
+        #         if len(input_downbeats) != 0 and int(input_beat * wav_sr) == input_downbeats[-1]:
+        #             print('Dropped')
+        #             continue
+        #         if abs(wav_beat-input_beat)>beat_sync_threshold:
+        #             input_beat = wav_beat
+        #             print('Replaced')
+        #         wav_downbeats.append(int(wav_beat * wav_sr))
+        #         input_downbeats.append(int(input_beat * wav_sr))
 
-            # Normalizing Audio
-            mask_nan = torch.isnan(wav)
-            mask_inf = torch.isinf(wav)
-            wav[mask_nan] = 0
-            wav[mask_inf] = 1
+        #     downbeat_offset = input_downbeats[0]-wav_downbeats[0]
+        #     # print(downbeat_offset)
+        #     if downbeat_offset > 0:
+        #         wav = torch.concat([torch.zeros([1,channel,int(downbeat_offset)]).cpu(),wav.cpu()],dim=-1)
+        #         for i in range(len(wav_downbeats)):
+        #             wav_downbeats[i]=wav_downbeats[i]+downbeat_offset
+        #     wav_downbeats = [0] + wav_downbeats + [wav_length]
+        #     input_downbeats = [0] + input_downbeats + [wav_length]
 
-            wav_amp = wav.abs().max()
-            if wav_amp != 0:
-                wav = (wav/wav_amp).cpu()
+        #     # apply time stretching
+        #     wav = torch.Tensor(tsm.wsola(wav[0].cpu().detach().numpy(), np.array([wav_downbeats, input_downbeats])))[...,:wav_length].unsqueeze(0).to(torch.float32)
+
+        #     # Normalizing Audio
+        #     mask_nan = torch.isnan(wav)
+        #     mask_inf = torch.isinf(wav)
+        #     wav[mask_nan] = 0
+        #     wav[mask_inf] = 1
+
+        #     wav_amp = wav.abs().max()
+        #     if wav_amp != 0:
+        #         wav = (wav/wav_amp).cpu()
 
 
-            audio_write(
-                "background_synced",
-                wav[0].cpu(),
-                model.sample_rate,
-                strategy=normalization_strategy,
-                loudness_compressor=True,
-            )
+        #     audio_write(
+        #         "background_synced",
+        #         wav[0].cpu(),
+        #         model.sample_rate,
+        #         strategy=normalization_strategy,
+        #         loudness_compressor=True,
+        #     )
         
         wav = wav.to(torch.float32)
 
         wav_amp = wav.abs().max()
         vocal_amp = vocal.abs().max()
-        wav = 0.5*(wav/wav_amp).cpu() + 0.5*(vocal/vocal_amp)[...,:wav_length].cpu()*0.5
+
+        wav = 0.5*(wav/wav_amp).cpu()[...,:wav_length].cpu()*0.5
+
+        output = torch.zeros(2, wav.size())
+        output[0, :] = 0.5*(wav/wav_amp).cpu()[...,:wav_length].cpu()*0.5
+        output[1, :] = 0.5*(vocal/vocal_amp).cpu()[...,:wav_length].cpu()*0.5
         
         # Normalizing Audio
         mask_nan = torch.isnan(wav)
@@ -393,7 +397,7 @@ class Predictor(BasePredictor):
 
         audio_write(
             "out",
-            wav[0].cpu(),
+            output.cpu(),
             model.sample_rate,
             strategy=normalization_strategy,
             loudness_compressor=True,
